@@ -1,6 +1,8 @@
 # build folders
 cmake-build-*
 
+build/
+
 # Object files
 *.o
 *.ko
