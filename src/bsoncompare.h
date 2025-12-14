@@ -2,8 +2,6 @@
 #define BSONCOMPARE_H
 
 #include <bson/bson.h>
-#include <uthash.h>
-#include <pcre.h>
 #include "mongoc-matcher.h"
 
 BSON_BEGIN_DECLS
@@ -46,12 +44,6 @@ int                bsonsearch_free_project_str(void * ptr);
 
 #endif //WITH_UTILS
 
-struct pattern_to_regex {
-    char * pattern;            /* we'll use this field as the key */
-    pcre * re;
-    UT_hash_handle hh; /* makes this structure hashable */
-};
-extern struct pattern_to_regex *global_compiled_regexes;
 BSON_END_DECLS
 
 

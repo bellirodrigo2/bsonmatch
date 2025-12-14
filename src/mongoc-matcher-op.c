@@ -16,11 +16,11 @@
 
 
 #include <stddef.h>
+#include <string.h>
 #include "mongoc-matcher-op-private.h"
-#include <pcre.h>
+#include "wregex.h"
 #include <bson/bson.h>
 #include <math.h>
-#include <bson/bson.h>
 #include "bsoncompare.h"
 #include "mongoc-matcher-op-geojson.h"
 #include "mongoc-bson-descendants.h"
@@ -1352,57 +1352,24 @@ _mongoc_matcher_iter_eq_match (bson_iter_t *compare_iter, /* IN */
    case _TYPE_CODE(BSON_TYPE_REGEX, BSON_TYPE_UTF8):
       {
          uint32_t rlen;
-         const char * options = NULL;
-         const char * pattern = bson_iter_regex (compare_iter, &options);
-         const char *rstr;
-         struct pattern_to_regex *s, *precompiled_check=NULL;
+         const char *options = NULL;
+         const char *pattern = bson_iter_regex(compare_iter, &options);
+         const char *rstr = bson_iter_utf8(iter, &rlen);
 
-         rstr = bson_iter_utf8 (iter, &rlen);
-         pcre *re;
-         const char *error;
-         int erroffset;
-         int OVECCOUNT = 3;   //this code does not support returning match groups to the user
-         int ovector[OVECCOUNT];  //this code does not support returning match groups to the user
-         int rc;
-         int pcre_options = 0;
-         if (0 == memcmp (options, "i", 1)){ //TODO: Not including the option in the cache!
-            pcre_options = PCRE_CASELESS;
+         unsigned int wregex_opts = 0;
+         if (options) {
+            if (strchr(options, 'i')) wregex_opts |= WREGEX_CASELESS;
+            if (strchr(options, 'm')) wregex_opts |= WREGEX_MULTILINE;
+            if (strchr(options, 's')) wregex_opts |= WREGEX_DOTALL;
          }
-         HASH_FIND_STR(global_compiled_regexes, pattern, precompiled_check);
-         if (precompiled_check == NULL) //compile it and add it to the cache
-         {
-            s = (struct pattern_to_regex *)malloc(sizeof(struct pattern_to_regex)); //this neeeds to be freed by bsoncompre.regex_destroy
-            if (s == NULL) {
-               return false; //TODO: Toss a warning?
-            }
-            char *pattern_persist = bson_strdup(pattern);
-            /* Compile the regular expression in the first argument */
-            re = pcre_compile( pattern_persist,              /* the pattern */
-                               pcre_options,                    /* default options */
-                               &error,               /* for error message */
-                               &erroffset,           /* for error offset */
-                               NULL);                /* use default character tables */
-            s->pattern = pattern_persist;
-            s->re = re; //Even if the compile fails, cache it anyway so we're not recompiling, it'll pass below
-            HASH_ADD_KEYPTR(hh, global_compiled_regexes, s->pattern, strlen(s->pattern), s);
-         }
-         else
-         {
-            re = precompiled_check->re;
-         }
+
+         wregex_t *re = wregex_compile(pattern, wregex_opts);
          if (re == NULL) {
-            return false;  //TODO: Throw a warning
+            return false;
          }
-         rc = pcre_exec( re,                   /* the compiled pattern */
-                         NULL,                 /* no extra data - we didn't study the pattern */
-                         rstr,                 /* the subject string */
-                         rlen,                 /* the length of the subject */
-                         0,                    /* start at offset 0 in the subject */
-                         0,                    /* default options */
-                         ovector,              /* output vector for substring information */
-                         OVECCOUNT);           /* number of elements in the output vector */
-         bool match = false;
-         if (rc >= 0) { match = true; }
+
+         bool match = wregex_match(re, rstr, (size_t)rlen);
+         wregex_free(re);
          return match;
       }
    /* UTF8 on Left Side */

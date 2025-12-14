@@ -20,6 +20,15 @@
 #include <bson/bson.h>
 #include <uthash.h>
 
+/* Windows defines 'near' and 'far' as empty macros for legacy 16-bit compatibility.
+ * This conflicts with our struct member 'near'. Undefine them. */
+#ifdef near
+#undef near
+#endif
+#ifdef far
+#undef far
+#endif
+
 #ifdef WITH_YARA
 #include <yara.h>
 #endif //WITH_YARA
@@ -252,7 +261,7 @@ struct _mongoc_matcher_op_size_t
     mongoc_matcher_op_base_t base;
     mongoc_matcher_opcode_t compare_type;
     char *path;
-    u_int32_t size;
+    uint32_t size;
 };
 
 struct _mongoc_matcher_op_type_t

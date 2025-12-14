@@ -3,7 +3,7 @@
 #include <bson/bson.h>
 #include "mongoc-matcher.h"
 #include "bsoncompare.h"
-#include <uthash.h>
+#include "wregex.h"
 #ifdef WITH_YARA
 #include <yara.h>
 #endif //WITH_YARA
@@ -22,10 +22,7 @@
 #include "mongoc-matcher-op-modules.h"
 #endif
 
-// gcc -I/usr/include/libbson-1.0 -lbson-1.0 -lpcre -lyara -shared -o libbsoncompare.so -fPIC bsoncompare.c mongoc-matcher.c mongoc-matcher-op.c mongoc-matcher-op-geojson.c mongoc-matcher-op-yara.c
-
-
-struct pattern_to_regex *global_compiled_regexes = NULL;
+// gcc -I/usr/include/libbson-1.0 -lbson-1.0 -lyara -shared -o libbsoncompare.so -fPIC bsoncompare.c mongoc-matcher.c mongoc-matcher-op.c mongoc-matcher-op-geojson.c mongoc-matcher-op-yara.c
 
 uint32_t
 bsonsearch_capability() // [ UTILS(8) | YARA(4) | PROJECTION(2) | BASIC(1) ]
@@ -273,25 +270,14 @@ doc_destroy (bson_t *bson)
 int
 regex_destroy()
 {
-    int freed = 0;
-    struct pattern_to_regex *s, *tmp;
-    HASH_ITER(hh, global_compiled_regexes, s, tmp) {
-        HASH_DEL(global_compiled_regexes, s);
-        pcre_free(s->re);     //malloc in _mongoc_matcher_iter_eq_match
-        bson_free(s->pattern);//malloc in _mongoc_matcher_iter_eq_match
-        free(s);
-        freed++;
-    }
-    //TODO: slim chance s->re is Null?  Decided to let segfault for now to raise alarm
-    return freed;
+    wregex_cache_destroy();
+    return 0;
 }
+
 int
 regex_print()
 {
-    struct pattern_to_regex *s, *tmp;
-    HASH_ITER(hh, global_compiled_regexes, s, tmp) {
-        printf("The Pattern:(%s) \n", s->pattern);
-    }
+    wregex_cache_stats();
     return 0;
 }
 

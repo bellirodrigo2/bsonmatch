@@ -2,7 +2,7 @@
 cmake-build-*
 
 build/
-
+.claude
 # Object files
 *.o
 *.ko

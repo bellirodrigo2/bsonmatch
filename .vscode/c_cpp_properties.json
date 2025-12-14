@@ -5,7 +5,7 @@
             "includePath": [
                 "${workspaceFolder}/src/**",
                 "${workspaceFolder}/external/uthash/src",
-                "${workspaceFolder}/external/pcre2/src"
+                "${workspaceFolder}/build/external/pcre2/interface"
             ],
             "defines": [
                 "_DEBUG",
