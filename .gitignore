@@ -1,6 +1,8 @@
 # build folders
 cmake-build-*
 
+.vscode/
+
 build/
 .claude
 # Object files
