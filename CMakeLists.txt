@@ -14,7 +14,7 @@ include(ExternalProject)
 # ---------------------------------------------------------
 # UTHASH (header-only)
 # ---------------------------------------------------------
-set(UTHASH_DIR "${CMAKE_SOURCE_DIR}/external/uthash/src")
+set(UTHASH_DIR "${CMAKE_SOURCE_DIR}/external/mongoc/src/uthash/uthash-2.3.0")
 
 if(EXISTS "${UTHASH_DIR}/uthash.h")
     message(STATUS "Using uthash from: ${UTHASH_DIR}")
