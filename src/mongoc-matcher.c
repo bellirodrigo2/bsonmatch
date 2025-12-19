@@ -54,6 +54,11 @@ _mongoc_matcher_parse_logical (mongoc_matcher_opcode_t  opcode,
                                bool                     is_root,
                                bson_error_t            *error);
 
+static mongoc_matcher_op_t *
+_mongoc_matcher_parse_compare (bson_iter_t  *iter,
+                               const char   *path,
+                               bson_error_t *error);
+
 
 /*
  *--------------------------------------------------------------------------
@@ -76,13 +81,116 @@ _mongoc_matcher_parse_logical (mongoc_matcher_opcode_t  opcode,
  *--------------------------------------------------------------------------
  */
 
+/*
+ * Helper to parse a single comparison operator from the current iterator position.
+ * Returns the op on success, NULL on failure.
+ */
+static mongoc_matcher_op_t *
+_mongoc_matcher_parse_single_compare_op (bson_iter_t  *child,  /* IN - positioned at the operator */
+                                         bson_iter_t  *parent_iter, /* IN - parent iter for $near */
+                                         const char   *path,   /* IN */
+                                         bson_error_t *error)  /* OUT */
+{
+   const char *key = bson_iter_key(child);
+   mongoc_matcher_op_t *op = NULL;
+   mongoc_matcher_op_t *op_child;
+
+   if (strcmp(key, "$not") == 0) {
+      if (!(op_child = _mongoc_matcher_parse_compare (child, path, error))) {
+         return NULL;
+      }
+      op = _mongoc_matcher_op_not_new (path, op_child);
+   } else if (strcmp(key, "$gt") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_GT, path, child);
+   } else if (strcmp(key, "$gte") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_GTE, path, child);
+   } else if (strcmp(key, "$inset") == 0) {
+      op = _mongoc_matcher_op_inset_new (path, child);
+#ifdef WITH_YARA
+   } else if (strcmp(key, "$yara") == 0) {
+      op = _mongoc_matcher_op_yara_new (path, child);
+#endif //WITH_YARA
+#ifdef WITH_TEXT
+   } else if (strcmp(key, "$text") == 0) {
+      op = _mongoc_matcher_text_new(path, child);
+#endif //WITH_TEXT
+#ifdef WITH_CRYPT
+   } else if (strcmp(key, "$sealOpen") == 0) {
+      op = _mongoc_matcher_op_crypt_new (MONGOC_MATCHER_OPCODE_SEALOPEN, path, child);
+#endif /*WITH_CRYPT*/
+#ifdef WITH_IP
+   } else if (strcmp(key, "$inIPrange") == 0) {
+      op = _mongoc_matcher_op_ip_new (MONGOC_MATCHER_OPCODE_INIPRANGE, path, child);
+   } else if (strcmp(key, "$inIPrangeset") == 0) {
+      op = _mongoc_matcher_op_ip_new (MONGOC_MATCHER_OPCODE_INIPRANGESET, path, child);
+#endif /* WITH_IP */
+#ifdef WITH_MODULES
+   } else if (strcmp(key, "$module") == 0) {
+      op = _mongoc_matcher_op_module_new (path, child);
+#endif /* WITH_MODULES */
+   } else if (strcmp(key, "$in") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_IN, path, child);
+   } else if (strcmp(key, "$lt") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_LT, path, child);
+   } else if (strcmp(key, "$lte") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_LTE, path, child);
+   } else if (strcmp(key, "$ne") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_NE, path, child);
+   } else if (strcmp(key, "$nin") == 0) {
+      op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_NIN, path, child);
+   } else if (strcmp(key, "$exists") == 0) {
+      op = _mongoc_matcher_op_exists_new (path, child);
+   } else if (strcmp(key, "$type") == 0) {
+      op = _mongoc_matcher_op_type_new (path, child);
+   } else if (strcmp(key, "$size") == 0) {
+      op = _mongoc_matcher_op_size_new (MONGOC_MATCHER_OPCODE_SIZE, path, child);
+   } else if (strcmp(key, "$strlen") == 0) {
+      op = _mongoc_matcher_op_size_new (MONGOC_MATCHER_OPCODE_STRLEN, path, child);
+   } else if (strcmp(key, "$near") == 0) {
+      if (BSON_ITER_HOLDS_ARRAY(child)) {
+         bson_iter_t distance_iter;
+         if (parent_iter &&
+             bson_iter_recurse (parent_iter, &distance_iter) &&
+             bson_iter_next (&distance_iter) &&
+             bson_iter_next (&distance_iter)) {
+            const char *distance_key = bson_iter_key(&distance_iter);
+            if (strcmp(distance_key, "$maxDistance") == 0 &&
+                BSON_ITER_HOLDS_INT32(&distance_iter)) {
+               op = _mongoc_matcher_op_near_new(MONGOC_MATCHER_OPCODE_NEAR, path,
+                                                child, bson_iter_int32(&distance_iter));
+            }
+         }
+      } else if (BSON_ITER_HOLDS_DOCUMENT(child)) {
+         op = _mongoc_matcher_op_geonear_new(path, child);
+      }
+   } else if (strcmp(key, "$geoWithin") == 0) {
+      if (BSON_ITER_HOLDS_DOCUMENT(child)) {
+         op = _mongoc_matcher_op_geowithin_new(path, child);
+      }
+   } else if (strcmp(key, "$regex") == 0 || strcmp(key, "$options") == 0) {
+      /* $regex/$options in Extended JSON are parsed by libbson into native regex type.
+       * Skip them here - they should not appear as operators in practice. */
+      op = NULL;
+   } else {
+      bson_set_error (error,
+                      MONGOC_ERROR_MATCHER,
+                      MONGOC_ERROR_MATCHER_INVALID,
+                      "Invalid operator \"%s\"",
+                      key);
+      return NULL;
+   }
+
+   return op;
+}
+
 static mongoc_matcher_op_t *
 _mongoc_matcher_parse_compare (bson_iter_t  *iter,  /* IN */
                                const char   *path,  /* IN */
                                bson_error_t *error) /* OUT */
 {
-   const char * key;
-   mongoc_matcher_op_t * op = NULL, * op_child;
+   const char *key;
+   mongoc_matcher_op_t *op = NULL;
+   mongoc_matcher_op_t *current_op = NULL;
    bson_iter_t child;
 
    BSON_ASSERT (iter);
@@ -100,108 +208,31 @@ _mongoc_matcher_parse_compare (bson_iter_t  *iter,  /* IN */
 
       key = bson_iter_key (&child);
 
+      /* If first key doesn't start with $, treat as equality match on subdocument */
       if (key[0] != '$') {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_EQ, path,
-                                              iter);
-      } else if (strcmp(key, "$not") == 0) {
-         if (!(op_child = _mongoc_matcher_parse_compare (&child, path,
-                                                         error))) {
-            return NULL;
-         }
-         op = _mongoc_matcher_op_not_new (path, op_child);
-      } else if (strcmp(key, "$gt") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_GT, path,
-                                              &child);
-      } else if (strcmp(key, "$gte") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_GTE, path,
-                                              &child);
-      } else if (strcmp(key, "$inset") == 0) {
-          op = _mongoc_matcher_op_inset_new (path,
-                                             &child);
-#ifdef WITH_YARA
-      } else if (strcmp(key, "$yara") == 0) {
-          op = _mongoc_matcher_op_yara_new (path,
-                                            &child);
-#endif //WITH_YARA
-#ifdef WITH_TEXT
-      } else if (strcmp(key, "$text") == 0) {
-          op = _mongoc_matcher_text_new(path, &child);
-#endif //WITH_TEXT
-#ifdef WITH_CRYPT
-      } else if (strcmp(key, "$sealOpen") == 0) {
-         op = _mongoc_matcher_op_crypt_new (MONGOC_MATCHER_OPCODE_SEALOPEN, path,
-                                              &child);
-#endif /*WITH_CRYPT*/
-#ifdef WITH_IP
-      } else if (strcmp(key, "$inIPrange") == 0) {
-          op = _mongoc_matcher_op_ip_new (MONGOC_MATCHER_OPCODE_INIPRANGE,
-                                          path,
-                                          &child);
-      } else if (strcmp(key, "$inIPrangeset") == 0) {
-          op = _mongoc_matcher_op_ip_new (MONGOC_MATCHER_OPCODE_INIPRANGESET,
-                                          path,
-                                          &child);
-#endif /* WITH_IP */
-#ifdef WITH_MODULES
-      } else if (strcmp(key, "$module") == 0) {
-          op = _mongoc_matcher_op_module_new (path, &child);
-#endif /* WITH_MODULES */
-      } else if (strcmp(key, "$in") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_IN, path,
-                                              &child);
-      } else if (strcmp(key, "$lt") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_LT, path,
-                                              &child);
-      } else if (strcmp(key, "$lte") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_LTE, path,
-                                              &child);
-      } else if (strcmp(key, "$ne") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_NE, path,
-                                              &child);
-      } else if (strcmp(key, "$nin") == 0) {
-         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_NIN, path,
-                                              &child);
+         op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_EQ, path, iter);
+      } else {
+         /* Parse all operators in the document and combine with AND */
+         do {
+            current_op = _mongoc_matcher_parse_single_compare_op(&child, iter, path, error);
 
-      } else if (strcmp(key, "$exists") == 0) {
-         op = _mongoc_matcher_op_exists_new (path, &child);
-      } else if (strcmp(key, "$type") == 0) {
-         op = _mongoc_matcher_op_type_new (path, &child);
-      } else if (strcmp(key, "$size") == 0) {
-          op = _mongoc_matcher_op_size_new (MONGOC_MATCHER_OPCODE_SIZE, path, &child);
-      } else if (strcmp(key, "$strlen") == 0) {
-          op = _mongoc_matcher_op_size_new (MONGOC_MATCHER_OPCODE_STRLEN, path, &child);
-      } else if (strcmp(key, "$near") == 0) {
-          if (BSON_ITER_HOLDS_ARRAY(&child))
-          {
-              bson_iter_t distance_iter;
-              if (!bson_iter_recurse (iter, &distance_iter) ||
-                  !bson_iter_next (&distance_iter) ||
-                  !bson_iter_next (&distance_iter)) {
-                  return NULL; //$near requires both near and maxDistance
-              }
-              const char * distance_key = bson_iter_key(&distance_iter);
-              if (strcmp(distance_key, "$maxDistance") == 0 &&
-                  BSON_ITER_HOLDS_INT32(&distance_iter)) {
-                  op = _mongoc_matcher_op_near_new(MONGOC_MATCHER_OPCODE_NEAR, path,
-                                                   &child,
-                                                   bson_iter_int32(&distance_iter));
-              }
-          } else if (BSON_ITER_HOLDS_DOCUMENT(&child)){
-              op = _mongoc_matcher_op_geonear_new(path, &child);
-          }
+            if (current_op == NULL && error && error->code != 0) {
+               /* Error occurred */
+               if (op) {
+                  _mongoc_matcher_op_destroy(op);
+               }
+               return NULL;
+            }
 
-      } else if (strcmp(key, "$geoWithin") == 0) {
-          if (BSON_ITER_HOLDS_DOCUMENT(&child))
-          {
-              op = _mongoc_matcher_op_geowithin_new(path, &child);
-          }
-      }else {
-         bson_set_error (error,
-                         MONGOC_ERROR_MATCHER,
-                         MONGOC_ERROR_MATCHER_INVALID,
-                         "Invalid operator \"%s\"",
-                         key);
-         return NULL;
+            if (current_op != NULL) {
+               if (op == NULL) {
+                  op = current_op;
+               } else {
+                  /* Combine with AND */
+                  op = _mongoc_matcher_op_logical_new(MONGOC_MATCHER_OPCODE_AND, op, current_op);
+               }
+            }
+         } while (bson_iter_next(&child));
       }
    } else {
       op = _mongoc_matcher_op_compare_new (MONGOC_MATCHER_OPCODE_EQ, path, iter);
